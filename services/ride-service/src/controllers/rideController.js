@@ -159,8 +159,8 @@ exports.updateRideStatus = async (req, res, next) => {
 // GET AVAILABLE RIDES (for drivers)
 exports.getAvailableRides = async (req, res, next) => {
   try {
-    const rides = await Ride.find({ status: "requested" })
-      .populate("customerId", "name email");
+    // ❌ Removed populate (microservice issue)
+    const rides = await Ride.find({ status: "requested" });
 
     logger.info("Fetched available rides", { count: rides.length });
 
@@ -180,13 +180,11 @@ exports.getMyRides = async (req, res, next) => {
     let rides;
 
     if (req.user.role === "customer") {
-      rides = await Ride.find({ customerId: req.user.id })
-        .populate("customerId", "name email")
-        .populate("driverId", "name email");
+      // ❌ Removed populate
+      rides = await Ride.find({ customerId: req.user.id });
     } else {
-      rides = await Ride.find({ driverId: req.user.id })
-        .populate("customerId", "name email")
-        .populate("driverId", "name email");
+      // ❌ Removed populate
+      rides = await Ride.find({ driverId: req.user.id });
     }
 
     logger.info("Fetched user rides", { userId: req.user.id });
@@ -195,6 +193,28 @@ exports.getMyRides = async (req, res, next) => {
 
   } catch (err) {
     logger.error("Error fetching user rides", { error: err.message });
+    next(err);
+  }
+};
+
+
+// ✅ NEW: GET RIDE LOCATION (fix for frontend polling)
+exports.getRideLocation = async (req, res, next) => {
+  try {
+    const { rideId } = req.params;
+
+    const ride = await Ride.findById(rideId);
+
+    if (!ride) {
+      return res.status(404).json({ message: "Ride not found" });
+    }
+
+    res.json({
+      location: ride.currentLocation || null
+    });
+
+  } catch (err) {
+    logger.error("Error fetching ride location", { error: err.message });
     next(err);
   }
 };

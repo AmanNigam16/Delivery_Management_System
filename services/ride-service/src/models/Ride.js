@@ -30,6 +30,15 @@ const rideSchema = new mongoose.Schema(
     type: String,
     enum: ["requested", "accepted", "ongoing", "completed"],
     default: "requested"
+  },
+
+  currentLocation: {
+    lat: {
+      type: Number
+    },
+    lng: {
+      type: Number
+    }
   }
 
 },

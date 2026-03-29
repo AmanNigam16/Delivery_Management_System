@@ -5,7 +5,9 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const rideRoutes = require("./routes/rideRoutes");
+const Ride = require("./models/Ride");
 const { producer } = require("./config/kafka");
+const logger = require("./config/logger");
 const runConsumer = require("./kafka/consumer");
 
 const app = express();
@@ -46,12 +48,92 @@ io.on("connection", (socket) => {
     socket.join(userId);
   });
 
-  // Then handle events
-  socket.on("driver_location", (data) => {                              // data = { driverId, lat, lng }
-    // io.emit("driver_location_update", data);
-    io.to(data.driverId).emit("driver_location_update", data);          //  Instead of io.emit → we'll use Rooms (io.to())
+  socket.on("leave", (room) => {
+    socket.leave(room);
   });
 
+  // Then handle events
+  socket.on("driver_location", async (data) => {
+    try {
+      const { driverId, rideId, lat, lng } = data;
+
+      if (
+        !driverId ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng)
+      ) {
+        logger.warn("Invalid driver location payload", {
+          socketId: socket.id,
+          driverId,
+          rideId
+        });
+        return;
+      }
+
+      if (!rideId) {
+        logger.warn("Missing rideId in driver location", {
+          socketId: socket.id,
+          driverId
+        });
+        return;
+      }
+
+      const rideFilter = {
+        _id: rideId,
+        driverId,
+        status: { $in: ["accepted", "ongoing"] }
+      };
+
+      const ride = await Ride.findOneAndUpdate(
+        rideFilter,
+        {
+          currentLocation: { lat, lng }
+        },
+        {
+          new: true,
+          runValidators: true
+        }
+      ).select("_id driverId customerId currentLocation");
+
+      if (!ride) {
+        logger.warn("Active ride not found for driver location update", {
+          socketId: socket.id,
+          driverId,
+          rideId
+        });
+        return;
+      }
+
+      const locationPayload = {
+        rideId: ride._id.toString(),
+        driverId: ride.driverId.toString(),
+        customerId: ride.customerId.toString(),
+        lat: ride.currentLocation.lat,
+        lng: ride.currentLocation.lng
+      };
+
+      io.to(`ride:${locationPayload.rideId}`).emit(
+        "driver_location_update",
+        locationPayload
+      );
+
+      io.to(locationPayload.driverId).emit(
+        "driver_location_update",
+        locationPayload
+      );
+
+      io.to(locationPayload.customerId).emit(
+        "driver_location_update",
+        locationPayload
+      );
+    } catch (err) {
+      logger.error("Error processing driver location", {
+        socketId: socket.id,
+        error: err.message
+      });
+    }
+  });
+  
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
   });
@@ -82,7 +164,7 @@ mongoose.connect(process.env.MONGO_URI)
     console.log("Kafka Consumer Started");
 
     // ✅ Start server in the end
-    server.listen(process.env.PORT, () => {
+    server.listen(process.env.PORT, "0.0.0.0", () => {
       console.log(`Ride service running on ${process.env.PORT}`);
     });
   })
